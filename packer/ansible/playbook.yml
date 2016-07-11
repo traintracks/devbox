@@ -1,0 +1,126 @@
+---
+- hosts: all
+  become: yes
+  gather_facts: yes
+  tasks:
+
+    - name: Get VirtualBox version.
+      shell: cat /home/vagrant/.vbox_version
+      register: virtualbox_version
+
+    - name: Mount VirtualBox guest additions ISO.
+      mount:
+        name: /tmp/vbox
+        src: "/home/vagrant/VBoxGuestAdditions_{{ virtualbox_version.stdout }}.iso"
+        opts: loop
+        state: mounted
+        fstype: iso9660
+    
+    - name: Run VirtualBox guest additions installation.
+      shell: sh /tmp/vbox/VBoxLinuxAdditions.run
+      failed_when: false
+    
+    - name: Unmount VirtualBox guest additions ISO.
+      mount:
+        name: /tmp/vbox
+        src: "/home/vagrant/VBoxGuestAdditions_{{ virtualbox_version.stdout }}.iso"
+        state: absent
+        fstype: iso9660
+    
+    - name: Delete VirtualBox guest additions ISO.
+      file:
+        path: "/home/vagrant/VBoxGuestAdditions_{{ virtualbox_version.stdout }}.iso"
+        state: absent
+
+    - name: Ensure apt cache is updated.
+      apt: update_cache=yes cache_valid_time=3600
+    
+     # SSH daemon configuration.
+    - name: Configure SSH daemon.
+      lineinfile:
+        dest: /etc/ssh/sshd_config
+        regexp: "{{ item.regexp }}"
+        line: "{{ item.line }}"
+        state: present
+      with_items:
+        - regexp: '^UseDNS'
+          line: 'UseDNS no'
+        - regexp: '^GSSAPIAuthentication'
+          line: 'GSSAPIAuthentication no'
+    
+     # vagrant SSH configuration.
+    - name: Configure vagrant .ssh directory.
+      file:
+        path: /home/vagrant/.ssh
+        state: directory
+        owner: vagrant 
+        group: vagrant 
+        mode: 0700
+
+    - name: Get vagrant's public key.
+      get_url:
+        url: https://github.com/mitchellh/vagrant/raw/master/keys/vagrant.pub
+        dest: /home/vagrant/.ssh/authorized_keys
+        owner: vagrant 
+        group: vagrant 
+        mode: 0600
+   
+    - apt: "name={{ item }} state=installed"
+      with_items:
+        - apt-transport-https
+        - ca-certificates
+        - git
+        - wget
+        - curl
+        - vim
+        - zsh
+        - htop
+        - tmux
+        - ntp
+
+    - name: Ensure correct kernel headers are installed.
+      shell: "apt-get -y install linux-headers-$(uname -r)"
+
+    - name: Ensure correct kernel extra are installed.
+      shell: "apt-get -y install linux-image-extra-$(uname -r)"
+    
+    - name: Set timezone to UTC
+      when: ansible_date_time.tz != 'UTC'
+      command: timedatectl set-timezone UTC
+
+    - name: Enable ntp service
+      service: >
+        name=ntp
+        enabled=yes
+        state=started
+
+    - name: Disable automatic apt get updates
+      shell: systemctl disable  {{item}}
+      with_items:
+        - apt-daily
+        - apt-daily.service
+        - apt-daily.timer
+
+    - name: Ensure we got docker apt repo
+      apt_repository: repo='deb https://apt.dockerproject.org/repo ubuntu-xenial main' state=present
+    
+    - name: Ensure we got docker gpg key 
+      apt_key: keyserver=hkp://p80.pool.sks-keyservers.net:80 id=58118E89F3A912897C070ADBF76221572C52609D
+    
+    - name: Ensure apt cache is updated.
+      apt: update_cache=yes
+ 
+    - name: Has docker 
+      apt: name=docker-engine force=yes state=present
+    
+    - name: Add vagrant to docker group
+      user: name=vagrant groups=docker append=yes
+
+    - name: Ensure kubectl is installed
+      get_url: url=http://storage.googleapis.com/kubernetes-release/release/v1.2.4/bin/linux/amd64/kubectl dest=/usr/bin/kubectl mode=0755
+
+    - name: Ensure kargo is installed
+      pip: name=kargo
+
+    - name: Ensure we are Upgraded 
+      shell: apt-get -y upgrade && apt-get -y dist-upgrade

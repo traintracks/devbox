@@ -1,0 +1,166 @@
+if [ "$TMUX" = "" ]; then tmux; fi
+
+# If inside emacs start bash since it actually works with emacs
+if [ $INSIDE_EMACS ]; then
+    exec bash
+fi
+
+if [ -x /usr/libexec/path_helper ]; then
+  eval $(/usr/libexec/path_helper -s)
+fi
+
+autoload colors terminfo edit-command-line
+
+gnu=true
+os="$(uname -s)"
+os_prompt="$os"
+if [ "$os" = "Linux" ]; then
+    hostname="$(hostname -f)"
+    gnu=true
+    if [ -f /etc/debian_version ]; then
+	os_prompt=$(bash <(cat /etc/os-release; echo 'echo ${PRETTY_NAME/*, /}'))
+    elif [ -f /etc/redhat-release ]; then
+        os_prompt="$(cat /etc/redhat-release)"
+    fi
+else
+    hostname="$(hostname)"
+fi
+
+if [ "$os" = "OpenBSD" ]; then
+    release="$(uname -r)"
+    arch="$(uname -m)"
+    export PKG_PATH="http://ftp.sunet.se/pub/OpenBSD/$release/packages/$arch/"
+    os_prompt="$os $release"
+fi
+
+if [ "$os" = "Darwin" ]; then
+  os_prompt="Mac OS X $(sw_vers -productVersion)"
+fi
+if [[ "$terminfo[colors]" -ge 8 ]]; then
+    colors
+    # If in tmux we should setup pbcopy as a simple handling
+    if [[ -n "$TMUX"  ]]; then
+      alias clippy='tmux save-buffer - | pbcopy'
+    fi
+fi
+for color in RED GREEN YELLOW GREY BLUE MAGENTA CYAN WHITE; do
+    eval PR_$color='%{$terminfo[bold]$fg[${(L)color}]%}'
+    eval PR_LIGHT_$color='%{$fg[${(L)color}]%}'
+    (( count = $count + 1 ))
+done
+PR_NO_COLOUR="%{$terminfo[sgr0]%}"
+# Enable variable expansion in prompt
+setopt prompt_subst 
+export SSH_ASKPASS='ssh-askpass'
+# If this is an ssh-connection, then we should indicate it somehow
+if [ $SSH_CLIENT ]; then
+    remote_ps1_expansion="${PR_RED}"
+else
+    remote_ps1_expansion="${PR_NO_COLOUR}"
+fi
+PROMPT='
+${PR_WHITE}---(${PR_NO_COLOUR} ${PR_LIGHT_GREEN}${hostname}${PR_WHITE} \
+| ${PR_NO_COLOUR}${PR_LIGHT_CYAN}%n${PR_WHITE}${PR_WHITE} \
+| ${PR_NO_COLOUR}${PR_LIGHT_YELLOW}${TRAIN_CLUSTER}${PR_WHITE} %(?..${PR_WHITE} \
+| $PR_LIGHT_RED%? )${PR_WHITE})---${PR_NO_COLOUR} 
+${remote_ps1_expansion}%#${PR_NO_COLOUR} '
+RPS1=$'%B|%b%(1j_%{\e[32m%}%j%{\e[39m%}|_)%{\e[33m%}%4~%{\e[39m%}'
+PS2=$'%_> '
+PS4=$'%i_?'
+# Set some shell options
+setopt                \
+  RM_STAR_SILENT      \
+  APPEND_HISTORY      \
+  INC_APPEND_HISTORY  \
+  EXTENDED_HISTORY    \
+  HIST_IGNORE_DUPS    \
+  HIST_FIND_NO_DUPS   \
+  HIST_IGNORE_SPACE   \
+  AUTO_NAME_DIRS      \
+  CDABLEVARS          \
+  EXTENDED_GLOB       \
+  AUTO_LIST           \
+  INTERACTIVE_COMMENTS\
+  AUTO_MENU           \
+  AUTO_CD
+# Auto completion
+autoload -U compinit
+compinit -u
+
+# Other functionality
+zmodload zsh/net/tcp
+autoload -U tcp_open
+zstyle ':completion:*' verbose yes
+zstyle ':completion:*:descriptions' format '%B%d%b'
+zstyle ':completion:*:messages' format '%d'
+zstyle ':completion:*:warnings' format '%BNo match:%b %d'
+zstyle ':completion:*' group-name ''
+zstyle ':completion:*:rm:*' ignore-line yes
+zstyle ':completion:*:*:kill*:*:processes' list-colors "=(#b) #([0-9]#)*=36=31"
+zstyle ':completion:*:*:kill*:*' menu yes select
+
+# History settings
+HISTFILE=~/.zsh_history
+HIST_LEX_WORDS=1
+HISTSIZE=3000
+SAVEHIST=30000
+
+#  EMACS-like bindings
+bindkey -e
+zle -N edit-command-line
+bindkey '^X^E' edit-command-line
+bindkey '^Xe' edit-command-line
+
+# Makes the key bindings actually respect that / is a word boundary
+export WORDCHARS=''
+
+function _init-ssh-agent {
+  if ! which ssh-agent > /dev/null; then
+    return 1
+  fi
+  local lock_file=~/.ssh/zsh-ssh-agent
+  # Check if already running
+  if [ -e $lock_file ]; then
+    source $lock_file
+    kill -0 $SSH_AGENT_PID && test -e $SSH_AUTH_SOCK && return 0
+  fi
+  ssh-agent -t 36000 > $lock_file
+  source $lock_file
+}
+
+_init-ssh-agent &> /dev/null
+
+# Env variables
+export LC_CTYPE='en_US.UTF-8'
+export LANG='en_US.UTF-8'
+export EDITOR='vim'
+export PAGER='less'
+# Disable ctrl-s (stops output from hapening, evil shit)
+stty -ixany -ixon -ixoff
+alias ls="ls --color"
+alias l='ls'
+alias p="ps aux | $PAGER" 
+alias screen="screen -e '^oO'"
+alias ipsort='sort -n -t . -k 1,1 -k 2,2 -k 3,3 -k 4,4'
+# gnu aliases
+if $gnu; then 
+  alias grep='grep --color=tty'
+  alias fgrep='fgrep --color=tty'
+  alias egrep='egrep --color=tty'
+fi
+chpwd() {
+  [[ -t 1 ]] || return
+  case $TERM in
+    *xterm*|*rxvt*) printf \\033]0\;\%s\\007 "$HOST: $PWD"
+    ;;
+  esac
+}
+
+cat /etc/motd
+
+__git_files () { 
+ _wanted files expl 'local files' _files     
+}
+
+alias vless="vim -u /usr/share/vim/vim74/macros/less.vim"
+cd /vagrant

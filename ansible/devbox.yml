@@ -1,0 +1,8 @@
+---
+- hosts: all 
+  tasks:
+  - name: Copy zshrc 
+    copy: src=files/zshrc dest=/home/vagrant/.zshrc
+  - name: Set shell to zsh
+    become: yes
+    user: name=vagrant shell=/bin/zsh
